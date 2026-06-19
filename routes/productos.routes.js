@@ -6,7 +6,7 @@ const router = Router();
 
 router.get('/productos', getProductos);
 
-// 💡 CORREGIDO: El campo se llama 'imagen' igual que en el frontend (productos.page.ts)
+// 💡 CORREGIDO: ambas rutas usan 'imagen' para coincidir con el frontend
 router.post('/productos', upload.single('imagen'), postProducto);
 router.put('/productos/:id', upload.single('imagen'), putProducto);
 
