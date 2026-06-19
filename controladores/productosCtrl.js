@@ -14,19 +14,17 @@ export const getProductos = async (req, res) => {
 export const postProducto = async (req, res) => {
     try {
         const { prod_codigo, prod_nombre, prod_stock, prod_precio, prod_activo } = req.body;
-        const prod_imagen = req.file ? `/uploads/${req.file.filename}` : null;
 
-        // 💡 SEGURIDAD: Convertimos los textos del FormData a números para MySQL
+        const prod_imagen = req.file ? req.file.path : null;
+
         const stockNumero = parseInt(prod_stock, 10) || 0;
         const precioNumero = parseFloat(prod_precio) || 0.0;
         const activoNumero = prod_activo ? parseInt(prod_activo, 10) : 1;
 
-        // Validar campos obligatorios antes de procesar
         if (!prod_codigo || !prod_nombre) {
             return res.status(400).json({ message: "El código y el nombre son obligatorios" });
         }
 
-        // Validar código repetido
         const [fila] = await conmysql.query('SELECT * FROM productos WHERE prod_codigo = ?', [prod_codigo]);
         if (fila.length > 0) {
             return res.status(400).json({
@@ -35,18 +33,15 @@ export const postProducto = async (req, res) => {
             });
         }
 
-        // 💡 CORREGIDO: Pasamos las variables numéricas procesadas de forma segura
         const [resultado] = await conmysql.query(
             "INSERT INTO productos(prod_codigo, prod_nombre, prod_stock, prod_precio, prod_activo, prod_imagen) VALUES (?, ?, ?, ?, ?, ?)",
             [prod_codigo, prod_nombre, stockNumero, precioNumero, activoNumero, prod_imagen]
         );
 
-        // Retornamos un estado 201 (Creado) junto al id para que el frontend lo detecte con éxito
         return res.status(201).json({ prod_id: resultado.insertId, message: "Producto guardado con éxito" });
 
     } catch (error) {
-        // 💡 IMPORTANTE: Esto imprimirá la falla exacta en tu consola de Node.js si algo falla
-        console.error("Error exacto en postProducto:", error); 
+        console.error("Error exacto en postProducto:", error);
         return res.status(500).json({ message: "Error en el servidor", error: error.message });
     }
 };
@@ -56,8 +51,8 @@ export const putProducto = async (req, res) => {
     try {
         const { id } = req.params;
         const { prod_codigo, prod_nombre, prod_stock, prod_precio, prod_activo } = req.body;
-        
-        let prod_imagen = req.file ? `/uploads/${req.file.filename}` : null;
+
+        let prod_imagen = req.file ? req.file.path : null;
 
         if (!req.file) {
             const [filas] = await conmysql.query(
@@ -72,7 +67,6 @@ export const putProducto = async (req, res) => {
             }
         }
 
-        // 💡 SEGURIDAD: Convertimos también aquí para evitar fallas en actualizaciones
         const stockNumero = parseInt(prod_stock, 10) || 0;
         const precioNumero = parseFloat(prod_precio) || 0.0;
         const activoNumero = prod_activo ? parseInt(prod_activo, 10) : 1;
@@ -88,7 +82,7 @@ export const putProducto = async (req, res) => {
 
         const [rows] = await conmysql.query('SELECT * FROM productos WHERE prod_id = ?', [id]);
         return res.json(rows[0]);
-        
+
     } catch (error) {
         return res.status(500).json({ mensaje: 'Error en el servidor', error: error.message });
     }
