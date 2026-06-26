@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import fs from 'fs'; 
 import clientesRoutes from './routes/clientes.routes.js';
 import productosRoutes from './routes/productos.routes.js'; // 💡 NUEVO: Importamos las rutas de productos
+import pedidosRoutes from './routes/pedidos.routes.js'; // 🛒 NUEVO: Rutas del carrito / pago
 
 const app = express();
 const CLAVE_SECRETA = "FirmaSecretaDeMariaOlivia2026";
@@ -45,6 +46,7 @@ function verificarToken(req, res, next) {
 // 💡 RUTAS PROTEGIDAS (Ahora protegen tanto a clientes como a productos con el Token)
 app.use('/api', verificarToken, clientesRoutes);
 app.use('/api', verificarToken, productosRoutes); // 💡 NUEVO: Activamos las rutas de productos bajo la seguridad del Token
+app.use('/api', verificarToken, pedidosRoutes); // 🛒 NUEVO: Activamos las rutas de pedidos (carrito / pago)
 
 // Error 404
 app.use((req, res) => {
