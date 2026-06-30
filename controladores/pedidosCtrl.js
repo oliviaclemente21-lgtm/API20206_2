@@ -1,124 +1,104 @@
-export const guardarPedido = async (req, res) => {
-    const conexion = await conmysql.getConnection();
+import { conmysql } from '../db.js';
+
+// 1. CREAR UN PEDIDO (con su detalle) - se ejecuta al "pagar" en el carrito
+export const postPedido = async (req, res) => {
+    const { cli_id, usr_id, detalles } = req.body;
+
+    if (!cli_id) {
+        return res.status(400).json({ message: "Debe indicar el cliente (cli_id) del pedido" });
+    }
+    if (!Array.isArray(detalles) || detalles.length === 0) {
+        return res.status(400).json({ message: "El pedido debe tener al menos un producto en el detalle" });
+    }
+
+    const conn = await conmysql.getConnection();
 
     try {
-        await conexion.beginTransaction();
-        const {
-            cli_id,
-            cli_identificacion,
-            cli_nombre,
-            cli_telefono,
-            cli_correo,
-            cli_direccion,
-            cli_pais,
-            cli_ciudad,
-            ped_fecha,
-            usr_id,
-            ped_estado,
-            detalle
-        } = req.body;
-        // Validaciones
-        if (!detalle || detalle.length === 0) {
-            throw new Error("El pedido no tiene productos.");
-        }
-        let idCliente = Number(cli_id);
-        // Cliente nuevo
-        if (idCliente === 0) {
+        await conn.beginTransaction();
 
-            const [cliente] = await conexion.query(
-                `INSERT INTO clientes
-                (
-                    cli_identificacion,
-                    cli_nombre,
-                    cli_telefono,
-                    cli_correo,
-                    cli_direccion,
-                    cli_pais,
-                    cli_ciudad
-                )
-                VALUES (?,?,?,?,?,?,?)`,
-                [
-                    cli_identificacion,
-                    cli_nombre,
-                    cli_telefono,
-                    cli_correo,
-                    cli_direccion,
-                    cli_pais,
-                    cli_ciudad
-                ]
-            );
-
-            idCliente = cliente.insertId;
-        }
-        // Pedido
-        const [pedido] = await conexion.query(
-            `INSERT INTO pedidos
-            (
-                cli_id,
-                ped_fecha,
-                usr_id,
-                ped_estado
-            )
-            VALUES (?,?,?,?)`,
-            [
-                idCliente,
-                ped_fecha,
-                usr_id,
-                ped_estado
-            ]
-        );
-        const ped_id = pedido.insertId;
-        // Detalle
-        for (const item of detalle) {
-            if (Number(item.det_cantidad) <= 0) {
-                throw new Error(`Cantidad inválida del producto ${item.prod_id}`);
-            }
-            if (Number(item.det_precio) <= 0) {
-                throw new Error(`Precio inválido del producto ${item.prod_id}`);
-            }
-            // Verificar existencia del producto
-            const [producto] = await conexion.query(
-                "SELECT prod_id FROM productos WHERE prod_id=?",
+        // Verificamos stock de cada producto antes de descontar nada
+        for (const item of detalles) {
+            const [filas] = await conn.query(
+                'SELECT prod_stock, prod_nombre FROM productos WHERE prod_id = ? FOR UPDATE',
                 [item.prod_id]
             );
-            if (producto.length === 0) {
-                throw new Error(`El producto ${item.prod_id} no existe.`);
+
+            if (filas.length === 0) {
+                throw new Error(`El producto con id ${item.prod_id} no existe`);
             }
-            await conexion.query(
-                `INSERT INTO pedidos_detalle
-                (
-                    prod_id,
-                    ped_id,
-                    det_cantidad,
-                    det_precio
-                )
-                VALUES (?,?,?,?)`,
-                [
-                    item.prod_id,
-                    ped_id,
-                    item.det_cantidad,
-                    item.det_precio
-                ]
+            if (filas[0].prod_stock < item.det_cantidad) {
+                throw new Error(`Stock insuficiente para "${filas[0].prod_nombre}" (disponible: ${filas[0].prod_stock})`);
+            }
+        }
+
+        const ped_total = detalles.reduce(
+            (suma, item) => suma + (Number(item.det_precio) * Number(item.det_cantidad)),
+            0
+        );
+
+        const [resultadoPedido] = await conn.query(
+            'INSERT INTO pedidos (cli_id, usr_id, ped_total, ped_estado) VALUES (?, ?, ?, 1)',
+            [cli_id, usr_id || 1, ped_total]
+        );
+
+        const ped_id = resultadoPedido.insertId;
+
+        for (const item of detalles) {
+            await conn.query(
+                'INSERT INTO detalle_pedido (ped_id, prod_id, det_cantidad, det_precio) VALUES (?, ?, ?, ?)',
+                [ped_id, item.prod_id, item.det_cantidad, item.det_precio]
+            );
+
+            await conn.query(
+                'UPDATE productos SET prod_stock = prod_stock - ? WHERE prod_id = ?',
+                [item.det_cantidad, item.prod_id]
             );
         }
-        await conexion.commit();
-        res.status(201).json({
-            ok: true,
-            mensaje: "Pedido registrado correctamente.",
+
+        await conn.commit();
+
+        return res.status(201).json({
             ped_id,
-            cli_id: idCliente
+            ped_total,
+            message: "Pedido registrado con éxito"
         });
 
     } catch (error) {
-        await conexion.rollback();
-        console.error(error);
-        res.status(500).json({
-            ok: false,
-            mensaje: error.message
-        });
-
+        await conn.rollback();
+        console.error("Error exacto en postPedido:", error);
+        return res.status(500).json({ message: error.message || "Error en el servidor al crear el pedido" });
     } finally {
-        conexion.release();
+        conn.release();
     }
+};
 
+// 2. LISTAR TODOS LOS PEDIDOS (con el nombre del cliente)
+export const getPedidos = async (req, res) => {
+    try {
+        const [filas] = await conmysql.query(`
+            SELECT p.*, c.cli_nombre
+            FROM pedidos p
+            JOIN clientes c ON c.cli_id = p.cli_id
+            ORDER BY p.ped_fecha DESC
+        `);
+        res.json(filas);
+    } catch (error) {
+        return res.status(500).json({ message: "Error al obtener los pedidos", error: error.message });
+    }
+};
+
+// 3. VER EL DETALLE (productos) DE UN PEDIDO PUNTUAL
+export const getPedidoDetalle = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [detalles] = await conmysql.query(`
+            SELECT d.*, pr.prod_nombre, pr.prod_codigo, pr.prod_imagen
+            FROM detalle_pedido d
+            JOIN productos pr ON pr.prod_id = d.prod_id
+            WHERE d.ped_id = ?
+        `, [id]);
+        res.json(detalles);
+    } catch (error) {
+        return res.status(500).json({ message: "Error al obtener el detalle del pedido", error: error.message });
+    }
 };
